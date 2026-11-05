@@ -317,8 +317,8 @@ export async function rebuildVisits(s) {
 }
 
 /* ---------- импорт файла ---------- */
-/** Кладёт файл в Days/…/media по дате съёмки (если есть), иначе по fallbackStamp */
-export async function importMedia(srcPath, kind, ext, fallbackStamp) {
+/** Кладёт файл в Days/…/media (или folder/ГГГГ/ММ/ДАТА) по дате съёмки (если есть), иначе по fallbackStamp */
+export async function importMedia(srcPath, kind, ext, fallbackStamp, folder = '') {
   ensureVault();
   const skip = kind === 'voice' || kind === 'circle'; // у них время = момент отправки
   const meta = skip ? {}
@@ -326,11 +326,11 @@ export async function importMedia(srcPath, kind, ext, fallbackStamp) {
     : VID_EXT.test(ext) ? await readVideoMeta(srcPath)
     : {};
   const s = meta.created ? stamp(meta.created) : fallbackStamp;
-  const { mediaDir } = dayPaths(s);
-  await fsp.mkdir(mediaDir, { recursive: true });
+  const dir = folder ? path.join(VAULT_PATH, folder, s.year, s.month, s.date) : dayPaths(s).mediaDir;
+  await fsp.mkdir(dir, { recursive: true });
   const rand = Math.random().toString(36).slice(2, 6);
   const name = `${s.date}_${s.clock}_${kind}_${rand}${ext}`;
-  await fsp.copyFile(srcPath, path.join(mediaDir, name));
+  await fsp.copyFile(srcPath, path.join(dir, name));
   if (meta.gps) await logGeo(s, meta.gps, name);
   return { s, name, fromMeta: Boolean(meta.created), gps: meta.gps ?? null };
 }

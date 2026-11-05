@@ -44,6 +44,10 @@ export async function recordFinance(s, f) {
   await appendFileLocked(ledgerFile(), JSON.stringify(record) + '\n');
 }
 
+/** Дописывает строку в Капитал/Капитал.md */
+export const recordCapital = (s, text) =>
+  appendFileLocked(path.join(VAULT_PATH, 'Капитал', 'Капитал.md'), `- ${s.date} ${s.time} · ${text}\n`, '# Капитал\n\n');
+
 /** prefix: "2026-10-20" (день) или "2026-10" (месяц) */
 export async function financeSummary(prefix) {
   const file = ledgerFile();

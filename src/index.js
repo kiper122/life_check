@@ -6,7 +6,7 @@ import { message } from 'telegraf/filters';
 
 import { BOT_TOKEN,OWNER_ID,VAULT_PATH, API_ROOT, BOT_API_DOCKER_DIR, BOT_API_HOST_DIR,BOT_API_CONTAINER } from './config.js';
 import { stamp, writeLine, importMedia, importWhoop, writeWhoopPage, setField, addPlace, findPlace, logGeo, rebuildVisits } from './vault.js';
-import { parseFinance, recordFinance, financeSummary } from './finance.js';
+import { parseFinance, recordFinance, financeSummary, recordCapital } from './finance.js';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 
@@ -21,8 +21,9 @@ const MAX_TELEGRAM_FILE_SIZE = API_ROOT ? 2000 * 1024 * 1024 : 20 * 1024 * 1024;
 const FEED = '## 📝 Лента';
 
 const HELP = `Кидай что угодно, я раскладываю по дням в Obsidian:
-📷 фото, 🎥 видео, ⭕ кружки, 🎙 голосовые, 📎 файлы, 💭 текст
+📷 фото, 🎥 видео, ⭕️ кружки, 🎙 голосовые, 📎 файлы, 💭 текст
 Подпись и #теги сохраняются вместе с файлом.
+Фото с #заметки: в папку Заметки и в ленту дня.
 
 💰 Финансы текстом:
 -250 кофе #еда
@@ -30,15 +31,12 @@ const HELP = `Кидай что угодно, я раскладываю по д�
 -12.5 usd подписка #софт
 
 Команды:
-/today сводка дня
-/fin [2026-10] итоги месяца
 /rate 8 оценка дня
 /weight 78.4 вес
 /mood спокойный
-/thought мысль дня
 /whoop режим на 10 мин (или подпись #whoop к фото)
 /dump («Режим выгрузки»)
-/place («Имя места»)
+/kap 100$ 5000грн 30грн(нал) строка капитала
 `;
 
 /* ---------- доступ только владельцу ---------- */
@@ -123,8 +121,10 @@ async function finishDump() {
 /* ---------- медиа ---------- */
 const PLACE_RE = /(^|\s)!([\p{L}\p{N}_-]+)/gu;   // !Парк или !Парк_Горького
 const placeName = (raw) => raw.replace(/_/g, ' ');
+const NOTES_RE = /(^|\s)#заметки(?=\s|$)/iu;
+const NOTES_DIR = 'Заметки';
 
-async function saveMediaMessage(ctx, { kind, icon, fileId, ext, label = '', fileSize = 0 }) {
+async function saveMediaMessage(ctx, { kind, icon, fileId, ext, label = '', fileSize = 0, notes = false }) {
   const msg = ctx.message;
   const fallback = stampOf(msg);
   const raw = (msg.caption ?? '').trim();
@@ -146,7 +146,7 @@ async function saveMediaMessage(ctx, { kind, icon, fileId, ext, label = '', file
   let r = null;
   try {
     local = await getLocalFile(ctx, fileId, ext);
-    r = await importMedia(local.p, kind, ext, fallback);
+    r = await importMedia(local.p, kind, ext, fallback, notes ? NOTES_DIR : '');
     s = r.s;
     embed = `![[${r.name}]]`;
   } catch (e) {
@@ -223,7 +223,9 @@ async function flushAlbum(gid) {
     if (a.items.some((i) => isWhoop(i.ctx.message.caption))) {
       await saveWhoop(a.items);
     } else {
-      for (const { ctx, opts } of a.items) await saveMediaMessage(ctx, opts);
+      // подпись есть только у одного элемента альбома, но #заметки относится ко всем
+      const notes = a.items.some((i) => NOTES_RE.test(i.ctx.message.caption ?? ''));
+      for (const { ctx, opts } of a.items) await saveMediaMessage(ctx, { ...opts, notes });
     }
   } catch (e) {
     console.error(e);
@@ -235,7 +237,8 @@ async function flushAlbum(gid) {
 function routeImage(ctx, opts) {
   const gid = ctx.message.media_group_id;
   if (!gid) {
-    return isWhoop(ctx.message.caption) ? saveWhoop([{ ctx, opts }]) : saveMediaMessage(ctx, opts);
+    if (isWhoop(ctx.message.caption)) return saveWhoop([{ ctx, opts }]);
+    return saveMediaMessage(ctx, { ...opts, notes: NOTES_RE.test(ctx.message.caption ?? '') });
   }
   let a = albums.get(gid);
   if (!a) albums.set(gid, (a = { items: [], timer: null }));
@@ -327,6 +330,13 @@ for (const [cmd, key, title] of [['mood', 'mood', '🙂 Настроение'], 
   });
 }
 
+bot.command('kap', async (ctx) => {
+  const text = argOf(ctx).replace(/\s+/g, ' ');
+  if (!text) return ctx.reply('Формат: /kap 100$ 5000грн 30грн(нал)');
+  await recordCapital(stamp(ctx.message.date), text);
+  await ctx.reply(`💼 Капитал: ${text}`);
+});
+
 /* ---------- медиа ---------- */
 bot.on(message('photo'), (ctx) =>
   routeImage(ctx, { kind: 'photo', icon: '📷', fileId: ctx.message.photo.at(-1).file_id, ext: '.jpg' }));
@@ -382,6 +392,8 @@ await bot.telegram.setMyCommands([
   { command: 'thought', description: 'Мысль дня' },
   { command: 'help', description: 'Подсказка' },
   { command: 'whoop', description: 'Фото в папку Whoop' },
+  { command: 'dump', description: 'Режим выгрузки' },
+  { command: 'kap', description: 'Строка капитала' },
 ]);
 
 console.log(`Бот запущен. Хранилище: ${VAULT_PATH}`);
