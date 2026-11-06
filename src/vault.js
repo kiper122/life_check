@@ -318,9 +318,9 @@ export async function rebuildVisits(s) {
 
 /* ---------- импорт файла ---------- */
 /** Кладёт файл в Days/…/media (или folder/ГГГГ/ММ/ДАТА) по дате съёмки (если есть), иначе по fallbackStamp */
-export async function importMedia(srcPath, kind, ext, fallbackStamp, folder = '') {
+export async function importMedia(srcPath, kind, ext, fallbackStamp, { folder = '', useMeta = true } = {}) {
   ensureVault();
-  const skip = kind === 'voice' || kind === 'circle'; // у них время = момент отправки
+  const skip = !useMeta || kind === 'voice' || kind === 'circle'; // у них время = момент отправки
   const meta = skip ? {}
     : IMG_EXT.test(ext) ? await readImageMeta(srcPath)
     : VID_EXT.test(ext) ? await readVideoMeta(srcPath)

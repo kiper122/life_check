@@ -21,7 +21,7 @@ const MAX_TELEGRAM_FILE_SIZE = API_ROOT ? 2000 * 1024 * 1024 : 20 * 1024 * 1024;
 const FEED = '## 📝 Лента';
 
 const HELP = `Кидай что угодно, я раскладываю по дням в Obsidian:
-📷 фото, 🎥 видео, ⭕️ кружки, 🎙 голосовые, 📎 файлы, 💭 текст
+📷 фото, 🎥 видео, ⭕️ кружки, 🎙 голосовые, 🎵 аудио, 📎 файлы, 💭 текст
 Подпись и #теги сохраняются вместе с файлом.
 Фото с #заметки: в папку Заметки и в ленту дня.
 
@@ -45,16 +45,25 @@ bot.use((ctx, next) => {
   console.log('Чужой/неизвестный ID:', ctx.from?.id);
 });
 
-const ICONS = { photo: '📷', video: '🎥', circle: '⭕', voice: '🎙', file: '📎', whoop: '🟢' };
-const NO_META = new Set(['voice', 'circle']);
+const ICONS = { photo: '📷', video: '🎥', circle: '⭕', voice: '🎙', audio: '🎵', file: '📎', whoop: '🟢' };
+const NO_META = new Set(['voice', 'circle', 'audio']);
 const dump = { active: false, chat: null, count: {}, noTime: 0, failed: 0, days: new Map(), timer: null };
 let lastGeo = null;            // последние координаты { gps, s }
 const geoByMsg = new Map();    // message_id -> { gps, s }
 /* ---------- хелперы ---------- */
-const stampOf = (msg) => stamp(msg.forward_origin?.date ?? msg.forward_date ?? msg.date);
+const stampOf = (msg) => stamp(msg.date); // у пересланных это момент пересылки
+const isForwarded = (msg) => Boolean(msg.forward_origin ?? msg.forward_date);
 const indent = (t) => t.trim().split('\n').join('\n  ');
 const argOf = (ctx) => ctx.message.text.replace(/^\/\w+(@\w+)?\s*/, '').trim();
 const extOf = (name, fallback) => path.extname(name ?? '') || fallback;
+/** Подпись "↪ Имя" для пересланного сообщения или '' */
+const forwardedFrom = (msg) => {
+  const o = msg.forward_origin;
+  if (!o) return '';
+  const u = o.sender_user;
+  const name = u ? [u.first_name, u.last_name].filter(Boolean).join(' ') : o.sender_user_name ?? o.sender_chat?.title ?? o.chat?.title;
+  return name ? `↪ ${name}` : '';
+};
 const ok = (ctx) => (dump.active ? Promise.resolve() : ctx.react('👍').catch(() => {}));
 
 /** Возвращает локальный путь к файлу и функцию очистки */
@@ -146,7 +155,10 @@ async function saveMediaMessage(ctx, { kind, icon, fileId, ext, label = '', file
   let r = null;
   try {
     local = await getLocalFile(ctx, fileId, ext);
-    r = await importMedia(local.p, kind, ext, fallback, notes ? NOTES_DIR : '');
+    r = await importMedia(local.p, kind, ext, fallback, {
+      folder: notes ? NOTES_DIR : '',
+      useMeta: dump.active || !isForwarded(msg),
+    });
     s = r.s;
     embed = `![[${r.name}]]`;
   } catch (e) {
@@ -348,7 +360,13 @@ bot.on(message('video_note'), (ctx) =>
   saveMediaMessage(ctx, { kind: 'circle', icon: '⭕', fileId: ctx.message.video_note.file_id, ext: '.mp4' }));
 
 bot.on(message('voice'), (ctx) =>
-  saveMediaMessage(ctx, { kind: 'voice', icon: '🎙', fileId: ctx.message.voice.file_id, ext: '.ogg' }));
+  saveMediaMessage(ctx, { kind: 'voice', icon: '🎙', fileId: ctx.message.voice.file_id, ext: '.ogg', label: forwardedFrom(ctx.message) }));
+
+bot.on(message('audio'), (ctx) => {
+  const a = ctx.message.audio;
+  const label = [forwardedFrom(ctx.message), a.file_name ?? a.title].filter(Boolean).join(' ');
+  return saveMediaMessage(ctx, { kind: 'audio', icon: '🎵', fileId: a.file_id, ext: extOf(a.file_name, '.mp3'), label });
+});
 
 bot.on(message('document'), (ctx) => {
   const d = ctx.message.document;
